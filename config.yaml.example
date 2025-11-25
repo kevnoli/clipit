@@ -1,0 +1,41 @@
+# !Clipit Configuration
+# Copy this file to config.yaml and fill in your values
+
+# Twitch API Credentials
+twitch:
+  client_id: "" # USE .ENV VARIABLE TWITCH_CLIENT_ID
+  client_secret: "" # USE .ENV VARIABLE TWITCH_CLIENT_SECRET !
+  broadcaster_channel: "your_channel_name_here"
+
+# Clipit Commands (can be multiple, one per line)
+commands:
+  - "!clipit"
+  - "!clip"
+
+# User Do Not Allow list (optional) - List of usernames to block from voting
+donotallowlist:
+  enabled: true
+  usernames: ["baduser", "botabusinguser"]
+
+# Voting Configuration
+voting:
+  minimum_votes: 2
+  command_window: 15  # seconds
+  command_cooldown: 30  # seconds
+
+# Permissions
+permissions:
+  # Who can vote: Everyone, Subscribers, Moderators, Owner
+  vote_permissions: "Everyone"
+  # Subscriber months requirement (if vote_permissions is Subscribers)
+  # Format: SUB:3, SUB:6, SUB:12, etc.
+  subscriber_months: "SUB:3"
+  # Override permissions (users who can instantly trigger a clip)
+  override_permissions: "Owner"
+
+# Discord Webhook (optional, leave empty to disable)
+discord:
+  webhook_url: ""
+
+
+
