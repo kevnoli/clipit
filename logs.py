@@ -1,13 +1,13 @@
 import sys
 import logging
 from logging.handlers import RotatingFileHandler
-from typing import Literal
+
 
 def init_logging(
     *,
     level: str | int = "ERROR",
     log_file: str | None = "app.log",
-    max_bytes: int = 5 * 1024 * 1024,   # 5 MB
+    max_bytes: int = 5 * 1024 * 1024,  # 5 MB
     backup_count: int = 10,
     include_ascii_art: bool = False,  # New parameter to control ASCII art inclusion
 ) -> None:
@@ -36,7 +36,7 @@ def init_logging(
         except AttributeError as exc:
             raise ValueError(
                 f'Invalid log level "{level}". '
-                'Choose from DEBUG, INFO, WARNING, ERROR, CRITICAL.'
+                "Choose from DEBUG, INFO, WARNING, ERROR, CRITICAL."
             ) from exc
 
     root = logging.getLogger()
@@ -62,7 +62,7 @@ def init_logging(
             log_file, maxBytes=max_bytes, backupCount=backup_count
         )
         file_handler.setFormatter(formatter)
-        
+
         if include_ascii_art:  # Check if ASCII art should be included in the log
             ascii_art = """
 --------------------------------------------
@@ -76,7 +76,11 @@ def init_logging(
 --------------------------------------------"""
             # Format the ASCII art with yellow color using ANSI escape codes
             colored_ascii_art = f"\033[38;2;135;95;0m{ascii_art}\033[0m"
-            console_handler.emit(logging.LogRecord('root', logging.INFO, '', 0, colored_ascii_art, [], None))
+            console_handler.emit(
+                logging.LogRecord(
+                    "root", logging.INFO, "", 0, colored_ascii_art, (), None
+                )
+            )
 
         root.addHandler(file_handler)
 
@@ -84,7 +88,8 @@ def init_logging(
     logging.getLogger("twitchio").setLevel(logging.WARNING)
     logging.getLogger("twitchio.web.aio_adapter").setLevel(logging.WARNING)
 
+
 def get_logger(name: str | None = None) -> logging.Logger:
     """Return a logger for the given name.  If no name is supplied,
-       it returns the root logger."""
+    it returns the root logger."""
     return logging.getLogger(name or __name__)

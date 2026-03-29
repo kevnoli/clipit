@@ -1,224 +1,197 @@
+﻿"""
+Hosted Twitch OAuth helpers for !Clipit
 """
-Twitch OAuth2 Authentication for !Clipit
-Implements Authorization Code Grant flow with automatic token refresh
-"""
-import asyncio
-import aiohttp
-import webbrowser
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse, parse_qs
-from typing import Optional, Dict, Any
+
+import base64
+import hashlib
+import hmac
+import json
+import secrets
+import time
 from datetime import datetime
-from logs import get_logger; log = get_logger(__name__)
+from typing import Any, Dict
+from urllib.parse import urlencode
+
+import aiohttp
+
+from logs import get_logger
+
+log = get_logger(__name__)
 
 
-class AuthHandler(BaseHTTPRequestHandler):
-    """HTTP handler for OAuth callback"""
-    
-    def __init__(self, *args, auth_queue=None, **kwargs):
-        self.auth_queue = auth_queue
-        # Set timeout to prevent hanging
-        self.timeout = 1
-        super().__init__(*args, **kwargs)
+class OAuthStateStore:
+    """In-memory OAuth state store with TTL-based validation."""
 
-    def do_GET(self):
-        """Handle OAuth callback"""
-        parsed_path = urlparse(self.path)
-        query_params = parse_qs(parsed_path.query)
+    def __init__(self, ttl_seconds: int = 600):
+        self.ttl_seconds = ttl_seconds
+        self._states: dict[str, float] = {}
 
-        if 'code' in query_params:
-            auth_code = query_params['code'][0]
-            if self.auth_queue:
-                self.auth_queue.put(auth_code)
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(
-                b'<html><body><h1>Authentication successful!</h1>'
-                b'<p>You can close this window and return to the application.</p></body></html>'
-            )
-        elif 'error' in query_params:
-            error = query_params['error'][0]
-            error_description = query_params.get('error_description', [b'Unknown error'])[0]
-            log.error(f"OAuth error: {error} - {error_description}")
-            if self.auth_queue:
-                self.auth_queue.put(None)
-            self.send_response(400)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(
-                b'<html><body><h1>Authentication failed</h1></body></html>'
-            )
-        else:
-            self.send_response(400)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(
-                b'<html><body><h1>Authentication failed</h1></body></html>'
-            )
+    def issue(self) -> str:
+        self._prune()
+        state = secrets.token_urlsafe(32)
+        self._states[state] = time.time() + self.ttl_seconds
+        return state
 
-    def log_message(self, format, *args):
-        """Suppress default logging"""
-        pass
+    def validate(self, state: str | None) -> bool:
+        if not state:
+            return False
+
+        self._prune()
+        expires_at = self._states.pop(state, None)
+        return bool(expires_at and expires_at >= time.time())
+
+    def _prune(self):
+        now = time.time()
+        expired = [state for state, expires_at in self._states.items() if expires_at < now]
+        for state in expired:
+            self._states.pop(state, None)
 
 
-def create_handler_class(auth_queue):
-    """Create a handler class with the auth_queue"""
-    class Handler(AuthHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, auth_queue=auth_queue, **kwargs)
-    return Handler
+class SessionManager:
+    """Issue and validate signed session cookies."""
+
+    def __init__(
+        self,
+        secret: str,
+        cookie_name: str = "clipit_session",
+        max_age_seconds: int = 60 * 60 * 24 * 30,
+    ):
+        if not secret:
+            raise ValueError("SESSION_SECRET must be configured for authenticated sessions.")
+        self.secret = secret.encode("utf-8")
+        self.cookie_name = cookie_name
+        self.max_age_seconds = max_age_seconds
+
+    def issue(self, broadcaster_id: str, login: str) -> str:
+        payload = {
+            "broadcaster_id": broadcaster_id,
+            "login": login,
+            "exp": int(time.time()) + self.max_age_seconds,
+        }
+        raw_payload = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        encoded_payload = base64.urlsafe_b64encode(raw_payload).decode("ascii")
+        signature = self._sign(encoded_payload)
+        return f"{encoded_payload}.{signature}"
+
+    def validate(self, token: str | None) -> dict[str, Any] | None:
+        if not token or "." not in token:
+            return None
+
+        encoded_payload, signature = token.split(".", 1)
+        if not hmac.compare_digest(signature, self._sign(encoded_payload)):
+            return None
+
+        try:
+            raw_payload = base64.urlsafe_b64decode(encoded_payload.encode("ascii"))
+            payload = json.loads(raw_payload.decode("utf-8"))
+        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+        if int(payload.get("exp", 0)) < int(time.time()):
+            return None
+        if "broadcaster_id" not in payload or "login" not in payload:
+            return None
+        return payload
+
+    def _sign(self, encoded_payload: str) -> str:
+        digest = hmac.new(
+            self.secret,
+            encoded_payload.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        return base64.urlsafe_b64encode(digest).decode("ascii")
 
 
 class TwitchAuth:
-    def __init__(self, client_id: str, client_secret: str, redirect_uri: str = "http://localhost:3000"):
+    def __init__(self, client_id: str, client_secret: str, redirect_uri: str):
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
         self.base_url = "https://id.twitch.tv/oauth2"
         self.api_url = "https://api.twitch.tv/helix"
 
-    def get_auth_url(self, scopes: list = None) -> str:
-        """Generate OAuth authorization URL"""
+    def get_auth_url(
+        self,
+        scopes: list[str] | None = None,
+        redirect_uri: str | None = None,
+        state: str | None = None,
+    ) -> str:
+        """Generate a hosted OAuth authorization URL."""
         if scopes is None:
-            scopes = [
-                "clips:edit",
-                "chat:read",
-                "chat:edit",
-                "moderator:read:chatters"
-            ]
+            scopes = ["clips:edit", "chat:read", "chat:edit", "moderator:read:chatters"]
 
-        scope_string = "+".join(scopes)
-        return (
-            f"{self.base_url}/authorize"
-            f"?client_id={self.client_id}"
-            f"&redirect_uri={self.redirect_uri}"
-            f"&response_type=code"
-            f"&scope={scope_string}"
-        )
+        params = {
+            "client_id": self.client_id,
+            "redirect_uri": redirect_uri or self.redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(scopes),
+        }
+        if state:
+            params["state"] = state
 
+        return f"{self.base_url}/authorize?{urlencode(params)}"
 
-    async def get_auth_code(self) -> Optional[str]:
-        """Open browser and wait for OAuth callback"""
-        import queue
-        
-        auth_url = self.get_auth_url()
-        log.info(f"Opening browser for authentication.")
-        log.info(f"If your browser does not automatically open, hit this URL manually: {auth_url}")
-        log.info("Waiting for you to authorize the application in your browser...")
-
-        # Create queue for communication between server thread and async code
-        auth_queue = queue.Queue()
-        
-        # Create handler class with queue
-        HandlerClass = create_handler_class(auth_queue)
-        
-        # Start local HTTP server in a separate thread
-        server = HTTPServer(('localhost', 3000), HandlerClass)
-        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
-        server_thread.daemon = True
-        server_thread.start()
-        log.info("Local server started on http://localhost:3000")
-
-        try:
-            # Open browser
-            webbrowser.open(auth_url)
-
-            # Wait for callback with timeout (2 minute)
-            timeout = 120
-            start_time = datetime.now()
-
-            # Poll the queue periodically
-            while True:
-                elapsed = (datetime.now() - start_time).total_seconds()
-
-                if elapsed > timeout:
-                    log.error("Authentication timeout - no response received within 2 minutes")
-                    return None
-                # Check if auth code is in queue (non-blocking)
-                try:
-                    auth_code = auth_queue.get_nowait()
-                    if auth_code:
-                        log.info("Authentication code received successfully")
-                        return auth_code
-                    else:
-                        log.error("Authentication failed (error in callback)")
-                        return None
-                except queue.Empty:
-                    # No code yet, wait a bit and check again
-                    await asyncio.sleep(0.5)
-                except Exception as e:
-                    log.error(f"Error retrieving auth code from queue: {e}")
-                    return None
-
-        except Exception as e:
-            log.error(f"Error waiting for authentication: {e}")
-            return None
-        finally:
-            # Shutdown server
-            try:
-                log.debug("Calling shutdown")
-                server.shutdown()
-                log.debug("Calling server_close")
-                server.server_close()
-                log.debug("Local server shut down")
-            except Exception as e:
-                log.error(f"Error shutting down server: {e}")
-
-    async def exchange_code_for_tokens(self, auth_code: str) -> Dict[str, Any]:
-        """Exchange authorization code for access and refresh tokens"""
+    async def exchange_code_for_tokens(
+        self, auth_code: str, redirect_uri: str | None = None
+    ) -> Dict[str, Any]:
+        """Exchange authorization code for access and refresh tokens."""
         url = f"{self.base_url}/token"
         data = {
             "client_id": self.client_id,
             "client_secret": self.client_secret,
             "code": auth_code,
             "grant_type": "authorization_code",
-            "redirect_uri": self.redirect_uri
+            "redirect_uri": redirect_uri or self.redirect_uri,
         }
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, data=data) as response:
                 if response.status == 200:
                     token_data = await response.json()
-                    expires_at = int(datetime.now().timestamp()) + token_data['expires_in']
+                    expires_at = int(datetime.now().timestamp()) + token_data["expires_in"]
                     return {
-                        'access_token': token_data['access_token'],
-                        'refresh_token': token_data['refresh_token'],
-                        'expires_at': expires_at
+                        "access_token": token_data["access_token"],
+                        "refresh_token": token_data["refresh_token"],
+                        "expires_at": expires_at,
                     }
-                else:
-                    error_text = await response.text()
-                    log.error(f"Token exchange failed: {response.status} - {error_text} - URL: {url} - data: {data} - token_data: {token_data}")
-                    raise Exception(f"Failed to exchange code for tokens: {error_text}")
+
+                error_text = await response.text()
+                log.error(
+                    "Token exchange failed: %s - %s",
+                    response.status,
+                    error_text,
+                )
+                raise RuntimeError(f"Failed to exchange code for tokens: {error_text}")
 
     async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
-        """Refresh access token using refresh token"""
+        """Refresh access token using a refresh token."""
         url = f"{self.base_url}/token"
         data = {
             "client_id": self.client_id,
             "client_secret": self.client_secret,
             "refresh_token": refresh_token,
-            "grant_type": "refresh_token"
+            "grant_type": "refresh_token",
         }
 
         async with aiohttp.ClientSession() as session:
             async with session.post(url, data=data) as response:
                 if response.status == 200:
                     token_data = await response.json()
-                    expires_at = int(datetime.now().timestamp()) + token_data['expires_in']
+                    expires_at = int(datetime.now().timestamp()) + token_data["expires_in"]
                     return {
-                        'access_token': token_data['access_token'],
-                        'refresh_token': token_data.get('refresh_token', refresh_token),
-                        'expires_at': expires_at
+                        "access_token": token_data["access_token"],
+                        "refresh_token": token_data.get("refresh_token", refresh_token),
+                        "expires_at": expires_at,
                     }
-                else:
-                    error_text = await response.text()
-                    log.error(f"Token refresh failed: {response.status} - {error_text}")
-                    raise Exception(f"Failed to refresh token: {error_text}")
+
+                error_text = await response.text()
+                log.error("Token refresh failed: %s - %s", response.status, error_text)
+                raise RuntimeError(f"Failed to refresh token: {error_text}")
 
     async def validate_token(self, access_token: str) -> bool:
-        """Validate if access token is still valid"""
+        """Validate if access token is still valid."""
         url = f"{self.base_url}/validate"
         headers = {"Authorization": f"OAuth {access_token}"}
 
@@ -227,18 +200,23 @@ class TwitchAuth:
                 return response.status == 200
 
     async def get_user_info(self, access_token: str) -> Dict[str, Any]:
-        """Get authenticated user information"""
+        """Get authenticated user information."""
         url = f"{self.api_url}/users"
         headers = {
             "Authorization": f"Bearer {access_token}",
-            "Client-Id": self.client_id
+            "Client-Id": self.client_id,
         }
 
         async with aiohttp.ClientSession() as session:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    return data.get('data', [{}])[0] if data.get('data') else {}
-                else:
-                    log.error(f"Failed to get user info: {response.status}")
-                    return {}
+                    return data.get("data", [{}])[0] if data.get("data") else {}
+
+                error_text = await response.text()
+                log.error(
+                    "Failed to get user info: %s - %s",
+                    response.status,
+                    error_text,
+                )
+                return {}

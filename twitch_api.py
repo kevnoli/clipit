@@ -2,12 +2,15 @@
 Twitch API client for !Clipit
 Handles clip generation, stream status, and user information
 """
+
 import aiohttp
-from logs import get_logger; log = get_logger(__name__)
+from logs import get_logger
 import asyncio
 from typing import Optional, Dict, Any
 
 from clip import TwitchClip  # Import the new clips module
+
+log = get_logger(__name__)
 
 
 class TwitchAPI:
@@ -23,7 +26,7 @@ class TwitchAPI:
         return {
             "Authorization": f"Bearer {self.access_token}",
             "Client-Id": self.client_id,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
     async def is_stream_live(self, broadcaster_id: str) -> bool:
@@ -32,11 +35,13 @@ class TwitchAPI:
         params = {"user_id": broadcaster_id}
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self._get_headers(), params=params) as response:
+            async with session.get(
+                url, headers=self._get_headers(), params=params
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    streams = data.get('data', [])
-                    return len(streams) > 0 and streams[0].get('type') == 'live'
+                    streams = data.get("data", [])
+                    return len(streams) > 0 and streams[0].get("type") == "live"
                 else:
                     log.error(f"Failed to check stream status: {response.status}")
                     return False
@@ -47,16 +52,20 @@ class TwitchAPI:
         params = {"login": broadcaster_name.lower()}
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self._get_headers(), params=params) as response:
+            async with session.get(
+                url, headers=self._get_headers(), params=params
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    users = data.get('data', [])
+                    users = data.get("data", [])
                     if users:
-                        return users[0].get('id')
+                        return users[0].get("id")
                 elif response.status == 401:
                     # Unauthorized - token is invalid
                     error_text = await response.text()
-                    log.error(f"Unauthorized (401) - Invalid access token: {error_text}")
+                    log.error(
+                        f"Unauthorized (401) - Invalid access token: {error_text}"
+                    )
                     raise ValueError("INVALID_TOKEN_401")
                 else:
                     log.error(f"Failed to get broadcaster ID: {response.status}")
@@ -71,17 +80,21 @@ class TwitchAPI:
             async with session.get(url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    users = data.get('data', [])
+                    users = data.get("data", [])
                     if users:
                         return users[0]
                 elif response.status == 401:
                     # Unauthorized - token is invalid
                     error_text = await response.text()
-                    log.error(f"Unauthorized (401) - Invalid access token: {error_text}")
+                    log.error(
+                        f"Unauthorized (401) - Invalid access token: {error_text}"
+                    )
                     raise ValueError("INVALID_TOKEN_401")
                 else:
                     error_text = await response.text()
-                    log.error(f"Failed to get user info: {response.status} - {error_text}")
+                    log.error(
+                        f"Failed to get user info: {response.status} - {error_text}"
+                    )
                 return None
 
     async def create_clip(self, broadcaster_id: str) -> Optional[Dict[str, Any]]:
@@ -94,9 +107,9 @@ class TwitchAPI:
             async with session.post(url, headers=headers, params=params) as response:
                 if response.status == 202:
                     data = await response.json()
-                    clip_data = data.get('data', [])
+                    clip_data = data.get("data", [])
                     if clip_data:
-                        clip_id = clip_data[0].get('id')
+                        clip_id = clip_data[0].get("id")
                         log.info(f"Clip creation initiated: {clip_id}")
                         return clip_data[0]
                     else:
@@ -104,10 +117,14 @@ class TwitchAPI:
                         return None
                 else:
                     error_text = await response.text()
-                    log.error(f"Failed to create clip: {response.status} - {error_text}")
+                    log.error(
+                        f"Failed to create clip: {response.status} - {error_text}"
+                    )
                     return None
 
-    async def get_clip_url(self, clip_id: str, max_retries: int = 10, delay: float = 2.0) -> Optional[str]:
+    async def get_clip_url(
+        self, clip_id: str, max_retries: int = 10, delay: float = 2.0
+    ) -> Optional[str]:
         """
         Get clip URL by polling for clip data
         Clips take time to process, so we need to poll
@@ -119,19 +136,25 @@ class TwitchAPI:
             await asyncio.sleep(delay)
 
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self._get_headers(), params=params) as response:
+                async with session.get(
+                    url, headers=self._get_headers(), params=params
+                ) as response:
                     if response.status == 200:
                         data = await response.json()
-                        clips = data.get('data', [])
+                        clips = data.get("data", [])
                         if clips:
-                            clip_url = clips[0].get('url')
+                            clip_url = clips[0].get("url")
                             if clip_url:
                                 log.info(f"Clip URL retrieved: {clip_url}")
                                 return clip_url
                             else:
-                                log.debug(f"Clip {clip_id} not ready yet (attempt {attempt + 1}/{max_retries})")
+                                log.debug(
+                                    f"Clip {clip_id} not ready yet (attempt {attempt + 1}/{max_retries})"
+                                )
                         else:
-                            log.debug(f"Clip {clip_id} not found (attempt {attempt + 1}/{max_retries})")
+                            log.debug(
+                                f"Clip {clip_id} not found (attempt {attempt + 1}/{max_retries})"
+                            )
                     else:
                         log.warning(f"Failed to get clip data: {response.status}")
 
@@ -144,13 +167,15 @@ class TwitchAPI:
         params = {"id": clip_id}
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self._get_headers(), params=params) as response:
+            async with session.get(
+                url, headers=self._get_headers(), params=params
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    clips = data.get('data', [])
+                    clips = data.get("data", [])
                     if clips:
                         # Return the thumbnail URL from the first clip
-                        thumbnail_url = clips[0].get('thumbnail_url')
+                        thumbnail_url = clips[0].get("thumbnail_url")
                         if thumbnail_url:
                             log.info(f"Clip thumbnail URL retrieved: {thumbnail_url}")
                             return thumbnail_url
@@ -161,10 +186,10 @@ class TwitchAPI:
     async def get_clip_data(self, clip_id: str) -> Optional[TwitchClip]:
         """
         Get complete clip data for a given clip ID
-        
+
         Args:
             clip_id (str): The ID of the clip to retrieve
-            
+
         Returns:
             Optional[TwitchClip]: A TwitchClip instance with all clip data, or None if failed
         """
@@ -172,10 +197,12 @@ class TwitchAPI:
         params = {"id": clip_id}
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self._get_headers(), params=params) as response:
+            async with session.get(
+                url, headers=self._get_headers(), params=params
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    clips = data.get('data', [])
+                    clips = data.get("data", [])
                     if clips:
                         # Create and return TwitchClip instance from the first clip
                         clip_data = clips[0]
@@ -185,44 +212,50 @@ class TwitchAPI:
                         return None
                 else:
                     error_text = await response.text()
-                    log.error(f"Failed to get clip data: {response.status} - {error_text}")
+                    log.error(
+                        f"Failed to get clip data: {response.status} - {error_text}"
+                    )
                     return None
 
     async def get_twitch_game_name_by_id(self, game_id: str) -> Optional[str]:
         """
         Get the name of a Twitch game by its ID
-        
+
         Args:
             game_id (str): The ID of the Twitch game
-            
+
         Returns:
             Optional[str]: The name of the game, or None if not found
         """
         url = f"{self.base_url}/games"
         params = {"id": game_id}
-        
+
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self._get_headers(), params=params) as response:
+            async with session.get(
+                url, headers=self._get_headers(), params=params
+            ) as response:
                 if response.status == 200:
                     data = await response.json()
-                    games = data.get('data', [])
+                    games = data.get("data", [])
                     if games:
-                        return games[0].get('name')
+                        return games[0].get("name")
                     else:
                         log.error(f"No game data found for ID: {game_id}")
                         return None
                 else:
                     error_text = await response.text()
-                    log.error(f"Failed to get game name: {response.status} - {error_text}")
+                    log.error(
+                        f"Failed to get game name: {response.status} - {error_text}"
+                    )
                     return None
-            
+
     async def create_clip_and_get_url(self, broadcaster_id: str) -> Optional[str]:
         """Create a clip and wait for URL to be available"""
         clip_data = await self.create_clip(broadcaster_id)
         if not clip_data:
             return None
 
-        clip_id = clip_data.get('id')
+        clip_id = clip_data.get("id")
         if not clip_id:
             return None
 

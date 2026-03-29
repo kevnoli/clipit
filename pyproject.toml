@@ -1,7 +1,7 @@
 [project]
 name = "clipit"
 version = "0.1.0"
-description = "Add your description here"
+description = "Hosted multi-broadcaster Twitch clip voting service"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
@@ -9,6 +9,7 @@ dependencies = [
     "aiohttp>=3.9.0",
     "aiosignal==1.4.0",
     "attrs==25.4.0",
+    "fastapi[standard]>=0.116.1",
     "frozenlist==1.8.0",
     "idna==3.11",
     "iso8601==2.1.0",
@@ -18,5 +19,12 @@ dependencies = [
     "pyyaml>=6.0.1",
     "twitchio==2.10.0",
     "typing-extensions==4.15.0",
+    "uvicorn>=0.35.0",
     "yarl==1.22.0",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12.9",
+    "ty>=0.0.26",
 ]

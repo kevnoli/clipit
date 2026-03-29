@@ -40,5 +40,5 @@ config.yaml
 .DS_Store
 Thumbs.db
 
-
-
+.venv
+.ruff_cache

@@ -1,41 +1,40 @@
-# !Clipit Configuration
-# Copy this file to config.yaml and fill in your values
+﻿# !Clipit Configuration
+# Copy this file to config.yaml and fill in your values.
+# These values are used as defaults for a broadcaster the first time they connect.
+
+app:
+  base_url: "https://your-domain.example.com"
+  host: "0.0.0.0"
+  port: 8000
+  session_secret: "change-me-in-production"
 
 # Twitch API Credentials
+# Use environment variables for secrets in production.
 twitch:
-  client_id: "" # USE .ENV VARIABLE TWITCH_CLIENT_ID
-  client_secret: "" # USE .ENV VARIABLE TWITCH_CLIENT_SECRET !
-  broadcaster_channel: "your_channel_name_here"
+  client_id: "" # Prefer TWITCH_CLIENT_ID
+  client_secret: "" # Prefer TWITCH_CLIENT_SECRET
+  redirect_path: "/auth/twitch/callback"
 
-# Clipit Commands (can be multiple, one per line)
+# Initial broadcaster defaults.
+# After a broadcaster logs in, these settings are copied into the database
+# and can be changed per broadcaster via the authenticated API.
 commands:
   - "!clipit"
   - "!clip"
 
-# User Do Not Allow list (optional) - List of usernames to block from voting
 donotallowlist:
   enabled: true
   usernames: ["baduser", "botabusinguser"]
 
-# Voting Configuration
 voting:
   minimum_votes: 2
-  command_window: 15  # seconds
-  command_cooldown: 30  # seconds
+  command_window: 15
+  command_cooldown: 30
 
-# Permissions
 permissions:
-  # Who can vote: Everyone, Subscribers, Moderators, Owner
   vote_permissions: "Everyone"
-  # Subscriber months requirement (if vote_permissions is Subscribers)
-  # Format: SUB:3, SUB:6, SUB:12, etc.
   subscriber_months: "SUB:3"
-  # Override permissions (users who can instantly trigger a clip)
   override_permissions: "Owner"
 
-# Discord Webhook (optional, leave empty to disable)
 discord:
   webhook_url: ""
-
-
-
