@@ -24,6 +24,8 @@ export default {
         workerDisabled: "Worker disabled for this broadcaster.",
         workerEnabled: "Worker enabled and running again.",
         workerToggleFailed: "Could not change worker state.",
+        workerReconnectRequired:
+            "Twitch authorization is no longer valid. Removing this broadcaster and reconnecting may be required.",
         broadcasterDisconnected: "Broadcaster disconnected from this Clipit instance.",
         broadcasterDisconnectFailed: "Could not disconnect broadcaster.",
     },
@@ -48,6 +50,9 @@ export default {
         triggeringExplanation:
             "Leave voting on, or set minimum votes to 1 to treat !clipit like a direct clip command.",
         connectButton: "Connect Twitch",
+        errored: "Errored",
+        workerErrorHint:
+            "This worker failed to reconnect to Twitch. Removing this broadcaster and reconnecting might be necessary.",
     },
     form: {
         commands: "Commands",
@@ -95,10 +100,10 @@ export default {
         removeBusy: "Removing...",
     },
     modal: {
-        eyebrow: "Remove broadcaster",
+        eyebrow: "Remove channel",
         title: "Disconnect this channel from Clipit?",
         copy: "This removes the broadcaster installation, stops the worker, clears the saved Twitch tokens, and ends the current session for this channel.",
-        keep: "Keep broadcaster",
+        keep: "Keep channel",
     },
     permissions: {
         everyone: "Everyone",

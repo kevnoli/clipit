@@ -28,7 +28,7 @@ def build_app_services(settings: Settings) -> AppServices:
     )
     session_manager = SessionManager(database, settings.session_secret)
     state_store = OAuthStateStore()
-    worker_manager = WorkerManager(settings, database, auth)
+    worker_manager = WorkerManager(settings, database, auth, session_manager)
     return AppServices(
         settings=settings,
         database=database,

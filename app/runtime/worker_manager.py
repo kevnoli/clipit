@@ -9,7 +9,7 @@ from typing import Awaitable, Callable
 
 from app.core.config import Settings
 from app.core.logs import get_logger
-from app.core.security import TwitchAuth
+from app.core.security import SessionManager, TwitchAuth
 from app.db import Database
 from app.integrations.twitch_api import TwitchAPI
 from app.models import BroadcasterInstallation, BroadcasterSettings, BroadcasterSettingsUpdate
@@ -28,19 +28,26 @@ class BroadcasterWorker:
         database: Database,
         installation: BroadcasterInstallation,
         api_factory: ApiFactory,
+        runtime_failure_callback: Callable[[str], Awaitable[None]],
     ):
         self.settings = settings
         self.runtime_config = runtime_config
         self.database = database
         self.installation = installation
         self.api_factory = api_factory
+        self.runtime_failure_callback = runtime_failure_callback
         self.bot: ClipitBot | None = None
         self.task: asyncio.Task | None = None
+        self._stopping = False
+        self._failure_reported = False
 
     async def start(self):
         if self.task and not self.task.done():
             log.debug("Worker already running for %s", self.installation.login)
             return
+
+        self._stopping = False
+        self._failure_reported = False
 
         self.bot = ClipitBot(
             config=self.runtime_config,
@@ -53,6 +60,7 @@ class BroadcasterWorker:
             bot_username=self.installation.login,
             broadcaster_name=self.installation.login,
             api_factory=self.api_factory,
+            runtime_failure_callback=self.report_runtime_failure,
         )
         self.task = asyncio.create_task(
             self._run(), name=f"clipit:{self.installation.login}"
@@ -62,6 +70,8 @@ class BroadcasterWorker:
         assert self.bot is not None
         try:
             await self.bot.start()
+            if not self._stopping:
+                await self.report_runtime_failure("worker stopped unexpectedly")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -71,29 +81,49 @@ class BroadcasterWorker:
                 exc,
                 exc_info=True,
             )
+            if not self._stopping:
+                message = str(exc).strip() or exc.__class__.__name__
+                await self.report_runtime_failure(message)
 
     async def stop(self):
+        current_task = asyncio.current_task()
+        self._stopping = True
+
         if self.bot is not None:
             with contextlib.suppress(Exception):
                 await self.bot.close()
 
         if self.task is not None:
             self.task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self.task
+            if self.task is not current_task:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await self.task
 
         self.bot = None
         self.task = None
+
+    async def report_runtime_failure(self, reason: str):
+        if self._failure_reported or self._stopping:
+            return
+        self._failure_reported = True
+        await self.runtime_failure_callback(reason)
 
     def is_running(self) -> bool:
         return bool(self.task and not self.task.done())
 
 
 class WorkerManager:
-    def __init__(self, settings: Settings, database: Database, auth: TwitchAuth):
+    def __init__(
+        self,
+        settings: Settings,
+        database: Database,
+        auth: TwitchAuth,
+        session_manager: SessionManager,
+    ):
         self.settings = settings
         self.database = database
         self.auth = auth
+        self.session_manager = session_manager
         self._workers: dict[str, BroadcasterWorker] = {}
         self._lock = asyncio.Lock()
 
@@ -123,6 +153,7 @@ class WorkerManager:
             broadcaster_id,
             BroadcasterSettingsUpdate(),
         )
+        self.database.set_broadcaster_worker_error(broadcaster_id, None)
 
         async with self._lock:
             existing_worker = self._workers.get(broadcaster_id)
@@ -136,6 +167,9 @@ class WorkerManager:
                 installation=installation,
                 api_factory=lambda broadcaster_id=broadcaster_id: self.get_api_client(
                     broadcaster_id
+                ),
+                runtime_failure_callback=lambda reason, broadcaster_id=broadcaster_id: (
+                    self.handle_runtime_failure(broadcaster_id, reason)
                 ),
             )
             self._workers[broadcaster_id] = worker
@@ -152,9 +186,24 @@ class WorkerManager:
             await worker.stop()
             log.info("Broadcaster worker stopped for %s", broadcaster_id)
 
-    async def disable_broadcaster(self, broadcaster_id: str):
+    async def disable_broadcaster(
+        self,
+        broadcaster_id: str,
+        *,
+        invalidate_sessions: bool = False,
+        reason: str | None = None,
+    ):
         self.database.set_broadcaster_enabled(broadcaster_id, False)
+        self.database.set_broadcaster_worker_error(broadcaster_id, reason)
         await self.stop_broadcaster(broadcaster_id)
+        if invalidate_sessions:
+            self.session_manager.invalidate_broadcaster(broadcaster_id)
+        if reason:
+            log.warning(
+                "Broadcaster %s disabled after runtime failure: %s",
+                broadcaster_id,
+                reason,
+            )
 
     async def enable_broadcaster(self, broadcaster_id: str) -> BroadcasterInstallation:
         self.database.set_broadcaster_enabled(broadcaster_id, True)
@@ -163,6 +212,13 @@ class WorkerManager:
     async def disconnect_broadcaster(self, broadcaster_id: str):
         await self.stop_broadcaster(broadcaster_id)
         self.database.delete_broadcaster(broadcaster_id)
+
+    async def handle_runtime_failure(self, broadcaster_id: str, reason: str):
+        await self.disable_broadcaster(
+            broadcaster_id,
+            invalidate_sessions=False,
+            reason=reason,
+        )
 
     async def update_broadcaster_settings(
         self,

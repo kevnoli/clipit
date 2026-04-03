@@ -436,6 +436,13 @@ code,
         0 0 0.8rem rgba(240, 192, 109, 0.36);
 }
 
+.status-led[data-tone="error"] .status-led-light {
+    background: #ff8b65;
+    box-shadow:
+        0 0 0 1px rgba(255, 139, 101, 0.24),
+        0 0 0.9rem rgba(255, 139, 101, 0.42);
+}
+
 .status-led[data-tone="hot"] .status-led-light {
     background: #ff8b65;
     box-shadow:
