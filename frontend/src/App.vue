@@ -104,6 +104,7 @@ const autoSaveMessage = computed(() => {
     }
     return t("manage.autosaveIdle");
 });
+const showReconnectAction = computed(() => Boolean(me.value?.worker?.worker_error));
 const permissionLabels = computed(() =>
     Object.fromEntries(
         permissionOptions.map((option) => [option, t(`permissions.${permissionKeys[option]}`)]),
@@ -328,6 +329,10 @@ async function logout() {
     }
 }
 
+function reconnectBroadcaster() {
+    window.location.assign("/api/auth/twitch/login");
+}
+
 async function saveSettings({ fromAutosave = false } = {}) {
     if (!broadcasterId.value) {
         return;
@@ -406,9 +411,11 @@ async function toggleEnabled() {
             }
         }
     } catch (error) {
+        await refreshState();
         notice.value = {
             tone: "error",
-            message: error instanceof Error ? error.message : t("notice.workerToggleFailed"),
+            message:
+                error instanceof Error ? error.message : t("notice.workerReconnectRequired"),
         };
     } finally {
         actionBusy.value = "";
@@ -817,6 +824,14 @@ onUnmounted(() => {
                                         <button class="button button-secondary" type="button"
                                             :disabled="actionBusy === 'toggle'" @click="toggleEnabled">
                                             {{ actionBusy === "toggle" ? t("manage.updating") : enableActionLabel }}
+                                        </button>
+                                    </div>
+
+                                    <div v-if="showReconnectAction" class="manage-action-item">
+                                        <span class="manage-action-label">{{ t("manage.reconnectHint") }}</span>
+                                        <button class="button button-secondary" type="button"
+                                            @click="reconnectBroadcaster">
+                                            {{ t("manage.reconnectButton") }}
                                         </button>
                                     </div>
 

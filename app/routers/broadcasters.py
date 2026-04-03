@@ -17,6 +17,7 @@ from app.models import (
     BroadcasterSnapshot,
     WorkerStatus,
 )
+from app.runtime.worker_manager import BroadcasterUnavailableError
 
 router = APIRouter(tags=["broadcasters"])
 
@@ -41,6 +42,7 @@ def build_broadcaster_snapshot(
         raise HTTPException(status_code=404, detail="Broadcaster not found")
 
     settings = services.database.get_broadcaster_settings(broadcaster_id)
+    worker_status = services.worker_manager.get_worker_status(broadcaster_id)
     snapshot = BroadcasterSnapshot(
         broadcaster_id=broadcaster.broadcaster_id,
         login=broadcaster.login,
@@ -48,8 +50,13 @@ def build_broadcaster_snapshot(
         enabled=broadcaster.enabled,
         expires_at=broadcaster.expires_at,
         worker=WorkerStatus(
-            **services.worker_manager.get_worker_status(broadcaster_id),
-            worker_error=broadcaster.worker_error,
+            worker_present=bool(worker_status["worker_present"]),
+            worker_running=bool(worker_status["worker_running"]),
+            worker_error=(
+                str(worker_status["worker_error"])
+                if worker_status["worker_error"] is not None
+                else None
+            ),
         ),
         settings=BroadcasterSettingsSnapshot.from_settings(settings) if settings else None,
     )
@@ -128,7 +135,10 @@ async def enable_broadcaster(
     if services.database.get_broadcaster(broadcaster_id) is None:
         raise HTTPException(status_code=404, detail="Broadcaster not found")
 
-    await services.worker_manager.enable_broadcaster(broadcaster_id)
+    try:
+        await services.worker_manager.enable_broadcaster(broadcaster_id)
+    except BroadcasterUnavailableError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return build_broadcaster_snapshot(services, broadcaster_id)
 
 

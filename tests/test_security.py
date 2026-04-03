@@ -1,4 +1,5 @@
 from pathlib import Path
+import asyncio
 
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
@@ -102,3 +103,75 @@ def test_logout_requires_csrf_token(tmp_path: Path):
         create_session(client, app, "123", "owner")
         response = client.post("/api/auth/logout")
     assert response.status_code == 403
+
+
+def test_startup_disables_broadcaster_when_twitch_auth_is_invalid(tmp_path: Path):
+    app = build_test_app(tmp_path)
+    services = app.state.services
+    services.database.save_broadcaster(
+        broadcaster_id="123",
+        login="owner",
+        display_name="Owner",
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_at=9999999999,
+    )
+    services.database.ensure_broadcaster_settings("123", BroadcasterSettingsUpdate())
+
+    async def fake_get_user_info(_access_token: str):
+        return {}
+
+    services.auth.get_user_info = fake_get_user_info
+
+    asyncio.run(services.worker_manager.start_all())
+
+    broadcaster = services.database.get_broadcaster("123")
+    assert broadcaster is not None
+    assert broadcaster.enabled is False
+    assert broadcaster.worker_error is not None
+
+
+def test_enable_endpoint_returns_conflict_for_invalid_twitch_auth(tmp_path: Path):
+    app = build_test_app(tmp_path)
+    with TestClient(app) as client:
+        create_session(client, app, "123", "owner")
+        services = app.state.services
+        services.database.set_broadcaster_enabled("123", False)
+        services.database.set_broadcaster_worker_error(
+            "123",
+            "Twitch authorization is no longer valid. Reconnect this broadcaster to resume the worker.",
+        )
+
+        async def fake_get_user_info(_access_token: str):
+            return {}
+
+        services.auth.get_user_info = fake_get_user_info
+        csrf_token = client.cookies.get("clipit_csrf") or ""
+
+        response = client.post(
+            "/api/broadcasters/123/enable",
+            headers={"X-CSRF-Token": csrf_token},
+        )
+
+    assert response.status_code == 409
+    assert "Reconnect this broadcaster" in response.json()["detail"]
+
+
+def test_me_surfaces_worker_error_state(tmp_path: Path):
+    app = build_test_app(tmp_path)
+    with TestClient(app) as client:
+        create_session(client, app, "123", "owner")
+        services = app.state.services
+        services.database.set_broadcaster_enabled("123", False)
+        services.database.set_broadcaster_worker_error(
+            "123",
+            "Twitch authorization is no longer valid. Reconnect this broadcaster to resume the worker.",
+        )
+
+        response = client.get("/api/me")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["enabled"] is False
+    assert payload["worker"]["worker_running"] is False
+    assert "Reconnect this broadcaster" in payload["worker"]["worker_error"]
