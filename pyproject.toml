@@ -7,16 +7,20 @@ requires-python = ">=3.14"
 dependencies = [
     "aiohappyeyeballs>=2.6.1",
     "aiohttp>=3.9.0",
+    "alembic>=1.16.5",
     "aiosignal==1.4.0",
     "attrs==25.4.0",
+    "cryptography>=45.0.0",
     "fastapi[standard]>=0.116.1",
     "frozenlist==1.8.0",
     "idna==3.11",
     "iso8601==2.1.0",
     "multidict==6.7.0",
+    "pydantic-settings>=2.10.1",
     "propcache==0.4.1",
     "python-dotenv==1.0.1",
     "pyyaml>=6.0.1",
+    "sqlmodel>=0.0.24",
     "twitchio==2.10.0",
     "typing-extensions==4.15.0",
     "uvicorn>=0.35.0",
@@ -25,6 +29,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pytest>=8.4.2",
     "ruff>=0.12.9",
     "ty>=0.0.26",
 ]
+
+[tool.fastapi]
+entrypoint = "app.main:app"

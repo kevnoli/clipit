@@ -7,7 +7,7 @@ from typing import Optional
 
 from twitchio import User
 
-from logs import get_logger
+from app.core.logs import get_logger
 
 log = get_logger(__name__)
 

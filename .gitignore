@@ -42,3 +42,9 @@ Thumbs.db
 
 .venv
 .ruff_cache
+frontend/node_modules/
+app/static/*
+!app/static/index.html
+!app/static/assets/
+app/static/assets/*
+!app/static/assets/.gitkeep

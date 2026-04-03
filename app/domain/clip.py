@@ -6,7 +6,8 @@ Represents all data associated with a Twitch clip as defined in the Twitch API d
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Dict, Any
-from logs import get_logger
+
+from app.core.logs import get_logger
 
 log = get_logger(__name__)
 

@@ -6,7 +6,8 @@ from typing import Any
 
 import aiohttp
 from datetime import datetime
-from logs import get_logger
+
+from app.core.logs import get_logger
 
 log = get_logger(__name__)
 

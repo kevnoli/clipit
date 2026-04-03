@@ -1,0 +1,1 @@
+"""Clipit application package."""

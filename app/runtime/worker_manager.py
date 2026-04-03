@@ -1,18 +1,19 @@
-﻿"""
+"""
 Broadcaster worker management for hosted !Clipit
 """
 
 import asyncio
 import contextlib
 import time
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
-from auth import TwitchAuth
-from bot import ClipitBot
-from config import BroadcasterConfig, Config
-from database import Database
-from logs import get_logger
-from twitch_api import TwitchAPI
+from app.core.config import Settings
+from app.core.logs import get_logger
+from app.core.security import TwitchAuth
+from app.db import Database
+from app.integrations.twitch_api import TwitchAPI
+from app.models import BroadcasterInstallation, BroadcasterSettings, BroadcasterSettingsUpdate
+from app.runtime.bot import ClipitBot
 
 log = get_logger(__name__)
 
@@ -22,17 +23,15 @@ ApiFactory = Callable[[], Awaitable[TwitchAPI]]
 class BroadcasterWorker:
     def __init__(
         self,
-        app_config: Config,
-        runtime_config: BroadcasterConfig,
+        settings: Settings,
+        runtime_config: BroadcasterSettings,
         database: Database,
-        auth: TwitchAuth,
-        installation: dict[str, Any],
+        installation: BroadcasterInstallation,
         api_factory: ApiFactory,
     ):
-        self.app_config = app_config
+        self.settings = settings
         self.runtime_config = runtime_config
         self.database = database
-        self.auth = auth
         self.installation = installation
         self.api_factory = api_factory
         self.bot: ClipitBot | None = None
@@ -40,24 +39,23 @@ class BroadcasterWorker:
 
     async def start(self):
         if self.task and not self.task.done():
-            log.debug("Worker already running for %s", self.installation["login"])
+            log.debug("Worker already running for %s", self.installation.login)
             return
 
         self.bot = ClipitBot(
             config=self.runtime_config,
             database=self.database,
-            auth=self.auth,
-            access_token=self.installation["access_token"],
-            broadcaster_id=self.installation["broadcaster_id"],
-            bot_id=self.installation["broadcaster_id"],
-            bot_username=self.installation["login"],
-            broadcaster_name=self.installation["login"],
+            access_token=self.installation.access_token,
+            broadcaster_id=self.installation.broadcaster_id,
+            bot_id=self.installation.broadcaster_id,
+            twitch_client_id=self.settings.twitch_client_id,
+            twitch_client_secret=self.settings.twitch_client_secret,
+            bot_username=self.installation.login,
+            broadcaster_name=self.installation.login,
             api_factory=self.api_factory,
-            twitch_client_id=self.app_config.twitch_client_id,
-            twitch_client_secret=self.app_config.twitch_client_secret,
         )
         self.task = asyncio.create_task(
-            self._run(), name=f"clipit:{self.installation['login']}"
+            self._run(), name=f"clipit:{self.installation.login}"
         )
 
     async def _run(self):
@@ -69,7 +67,7 @@ class BroadcasterWorker:
         except Exception as exc:
             log.error(
                 "Worker for %s stopped unexpectedly: %s",
-                self.installation["login"],
+                self.installation.login,
                 exc,
                 exc_info=True,
             )
@@ -92,8 +90,8 @@ class BroadcasterWorker:
 
 
 class WorkerManager:
-    def __init__(self, config: Config, database: Database, auth: TwitchAuth):
-        self.config = config
+    def __init__(self, settings: Settings, database: Database, auth: TwitchAuth):
+        self.settings = settings
         self.database = database
         self.auth = auth
         self._workers: dict[str, BroadcasterWorker] = {}
@@ -102,7 +100,8 @@ class WorkerManager:
     async def start_all(self):
         for installation in self.database.get_enabled_broadcasters():
             await self.start_or_restart_broadcaster(
-                installation["broadcaster_id"], installation=installation
+                installation.broadcaster_id,
+                installation=installation,
             )
 
     async def shutdown(self):
@@ -114,17 +113,16 @@ class WorkerManager:
     async def start_or_restart_broadcaster(
         self,
         broadcaster_id: str,
-        installation: Optional[dict[str, Any]] = None,
-    ) -> dict[str, Any]:
+        installation: BroadcasterInstallation | None = None,
+    ) -> BroadcasterInstallation:
         installation = await self.ensure_valid_installation(broadcaster_id, installation)
-        if not installation:
+        if installation is None:
             raise RuntimeError(f"Broadcaster {broadcaster_id} is not available")
 
-        settings_row = self.database.ensure_broadcaster_settings(
+        runtime_config = self.database.ensure_broadcaster_settings(
             broadcaster_id,
-            self.config.default_broadcaster_config(),
+            BroadcasterSettingsUpdate(),
         )
-        runtime_config = BroadcasterConfig.from_dict(settings_row)
 
         async with self._lock:
             existing_worker = self._workers.get(broadcaster_id)
@@ -132,10 +130,9 @@ class WorkerManager:
                 await existing_worker.stop()
 
             worker = BroadcasterWorker(
-                app_config=self.config,
+                settings=self.settings,
                 runtime_config=runtime_config,
                 database=self.database,
-                auth=self.auth,
                 installation=installation,
                 api_factory=lambda broadcaster_id=broadcaster_id: self.get_api_client(
                     broadcaster_id
@@ -144,7 +141,7 @@ class WorkerManager:
             self._workers[broadcaster_id] = worker
 
         await worker.start()
-        log.info("Broadcaster worker running for %s", installation["login"])
+        log.info("Broadcaster worker running for %s", installation.login)
         return installation
 
     async def stop_broadcaster(self, broadcaster_id: str):
@@ -159,7 +156,7 @@ class WorkerManager:
         self.database.set_broadcaster_enabled(broadcaster_id, False)
         await self.stop_broadcaster(broadcaster_id)
 
-    async def enable_broadcaster(self, broadcaster_id: str) -> dict[str, Any]:
+    async def enable_broadcaster(self, broadcaster_id: str) -> BroadcasterInstallation:
         self.database.set_broadcaster_enabled(broadcaster_id, True)
         return await self.start_or_restart_broadcaster(broadcaster_id)
 
@@ -168,43 +165,44 @@ class WorkerManager:
         self.database.delete_broadcaster(broadcaster_id)
 
     async def update_broadcaster_settings(
-        self, broadcaster_id: str, runtime_config: BroadcasterConfig
-    ) -> dict[str, Any]:
-        self.database.save_broadcaster_settings(broadcaster_id, runtime_config)
+        self,
+        broadcaster_id: str,
+        runtime_config: BroadcasterSettingsUpdate,
+    ) -> BroadcasterSettings:
+        settings = self.database.save_broadcaster_settings(broadcaster_id, runtime_config)
         installation = self.database.get_broadcaster(broadcaster_id)
-        if installation and installation.get("enabled"):
+        if installation and installation.enabled:
             await self.start_or_restart_broadcaster(broadcaster_id, installation=installation)
-        settings = self.database.get_broadcaster_settings(broadcaster_id)
-        return settings or runtime_config.to_dict()
+        return settings
 
     async def ensure_valid_installation(
         self,
         broadcaster_id: str,
-        installation: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
+        installation: BroadcasterInstallation | None = None,
+    ) -> BroadcasterInstallation | None:
         record = installation or self.database.get_broadcaster(broadcaster_id)
-        if not record or not record.get("enabled"):
+        if record is None or not record.enabled:
             return None
 
         current_time = int(time.time())
-        if current_time < int(record["expires_at"]) - 300:
+        if current_time < int(record.expires_at) - 300:
             return record
 
         try:
-            tokens = await self.auth.refresh_access_token(record["refresh_token"])
+            tokens = await self.auth.refresh_access_token(record.refresh_token)
         except Exception:
             log.error(
                 "Failed to refresh Twitch token for %s; disabling broadcaster",
-                record["login"],
+                record.login,
                 exc_info=True,
             )
             await self.disable_broadcaster(broadcaster_id)
             return None
 
         self.database.save_broadcaster(
-            broadcaster_id=record["broadcaster_id"],
-            login=record["login"],
-            display_name=record.get("display_name") or record["login"],
+            broadcaster_id=record.broadcaster_id,
+            login=record.login,
+            display_name=record.display_name,
             access_token=tokens["access_token"],
             refresh_token=tokens["refresh_token"],
             expires_at=tokens["expires_at"],
@@ -214,9 +212,9 @@ class WorkerManager:
 
     async def get_api_client(self, broadcaster_id: str) -> TwitchAPI:
         record = await self.ensure_valid_installation(broadcaster_id)
-        if not record:
+        if record is None:
             raise RuntimeError(f"Broadcaster {broadcaster_id} is not enabled")
-        return TwitchAPI(self.config.twitch_client_id, record["access_token"])
+        return TwitchAPI(self.settings.twitch_client_id, record.access_token)
 
     def connected_count(self) -> int:
         return len(self._workers)
@@ -227,4 +225,3 @@ class WorkerManager:
             "worker_present": worker is not None,
             "worker_running": worker.is_running() if worker else False,
         }
-

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Main Twitch bot for !Clipit
 Handles chat connection, message processing, and clip generation for one broadcaster
 """
@@ -8,14 +8,13 @@ from typing import Awaitable, Callable
 
 from twitchio.ext import commands
 
-from auth import TwitchAuth
-from config import BroadcasterConfig
-from database import Database
-from discord import DiscordWebhook
-from logs import get_logger
-from permissions import PermissionChecker
-from twitch_api import TwitchAPI
-from voting import VotingSystem
+from app.db import Database
+from app.core.logs import get_logger
+from app.domain.permissions import PermissionChecker
+from app.domain.voting import VotingSystem
+from app.integrations.discord import DiscordWebhook
+from app.integrations.twitch_api import TwitchAPI
+from app.models import BroadcasterSettings
 
 log = get_logger(__name__)
 
@@ -27,9 +26,8 @@ class ClipitBot(commands.Bot):
 
     def __init__(
         self,
-        config: BroadcasterConfig,
+        config: BroadcasterSettings,
         database: Database,
-        auth: TwitchAuth,
         access_token: str,
         broadcaster_id: str,
         bot_id: str,
@@ -57,11 +55,9 @@ class ClipitBot(commands.Bot):
 
         self.config = config
         self.database = database
-        self.auth = auth
         self.broadcaster_id = broadcaster_id
         self.broadcaster_name = channel_name
         self.bot_username = bot_username
-        self._bot_id = bot_id
         self._api_factory = api_factory
 
         self.permission_checker = PermissionChecker(config)
@@ -111,8 +107,7 @@ class ClipitBot(commands.Bot):
             )
             if is_mod or is_broadcaster:
                 await self._send_message(
-                    f"/me @{user_name} Clipit is online for {self.broadcaster_name}. "
-                    f"{self.database.get_total_clips_generated(self.broadcaster_id)} clips generated"
+                    f"/me @{user_name} Clipit is online for {self.broadcaster_name}."
                 )
             return
 

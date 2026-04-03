@@ -1,20 +1,20 @@
-﻿"""
+"""
 Hosted Twitch OAuth helpers for !Clipit
 """
 
 import base64
 import hashlib
 import hmac
-import json
 import secrets
 import time
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 from urllib.parse import urlencode
 
 import aiohttp
+from cryptography.fernet import Fernet, InvalidToken
 
-from logs import get_logger
+from app.core.logs import get_logger
 
 log = get_logger(__name__)
 
@@ -24,84 +24,129 @@ class OAuthStateStore:
 
     def __init__(self, ttl_seconds: int = 600):
         self.ttl_seconds = ttl_seconds
-        self._states: dict[str, float] = {}
+        self._states: dict[str, tuple[float, str]] = {}
 
-    def issue(self) -> str:
+    def issue(self, browser_binding: str) -> str:
         self._prune()
         state = secrets.token_urlsafe(32)
-        self._states[state] = time.time() + self.ttl_seconds
+        self._states[state] = (
+            time.time() + self.ttl_seconds,
+            self._binding_digest(browser_binding),
+        )
         return state
 
-    def validate(self, state: str | None) -> bool:
-        if not state:
+    def validate(self, state: str | None, browser_binding: str | None) -> bool:
+        if not state or not browser_binding:
             return False
 
         self._prune()
-        expires_at = self._states.pop(state, None)
-        return bool(expires_at and expires_at >= time.time())
+        record = self._states.pop(state, None)
+        if record is None:
+            return False
+        expires_at, binding_digest = record
+        return expires_at >= time.time() and hmac.compare_digest(
+            binding_digest,
+            self._binding_digest(browser_binding),
+        )
+
+    def _binding_digest(self, browser_binding: str) -> str:
+        return hashlib.sha256(browser_binding.encode("utf-8")).hexdigest()
 
     def _prune(self):
         now = time.time()
-        expired = [state for state, expires_at in self._states.items() if expires_at < now]
+        expired = [
+            state for state, (expires_at, _) in self._states.items() if expires_at < now
+        ]
         for state in expired:
             self._states.pop(state, None)
 
 
+class SecretBox:
+    marker = "enc:"
+
+    def __init__(self, secret: str):
+        if not secret:
+            raise ValueError("A secret is required to encrypt broadcaster credentials.")
+        derived_key = base64.urlsafe_b64encode(
+            hashlib.sha256(secret.encode("utf-8")).digest()
+        )
+        self.fernet = Fernet(derived_key)
+
+    def encrypt(self, value: str) -> str:
+        if not value or value.startswith(self.marker):
+            return value
+        encrypted = self.fernet.encrypt(value.encode("utf-8")).decode("ascii")
+        return f"{self.marker}{encrypted}"
+
+    def decrypt(self, value: str) -> str:
+        if not value or not value.startswith(self.marker):
+            return value
+        try:
+            return self.fernet.decrypt(
+                value.removeprefix(self.marker).encode("ascii")
+            ).decode("utf-8")
+        except InvalidToken as exc:
+            raise ValueError("Stored secret could not be decrypted.") from exc
+
+    def is_encrypted(self, value: str) -> bool:
+        return bool(value) and value.startswith(self.marker)
+
+
 class SessionManager:
-    """Issue and validate signed session cookies."""
+    """Issue and validate revocable database-backed app sessions."""
 
     def __init__(
         self,
+        database: Any,
         secret: str,
         cookie_name: str = "clipit_session",
         max_age_seconds: int = 60 * 60 * 24 * 30,
     ):
         if not secret:
             raise ValueError("SESSION_SECRET must be configured for authenticated sessions.")
+        self.database = database
         self.secret = secret.encode("utf-8")
         self.cookie_name = cookie_name
         self.max_age_seconds = max_age_seconds
 
-    def issue(self, broadcaster_id: str, login: str) -> str:
-        payload = {
-            "broadcaster_id": broadcaster_id,
-            "login": login,
-            "exp": int(time.time()) + self.max_age_seconds,
-        }
-        raw_payload = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        encoded_payload = base64.urlsafe_b64encode(raw_payload).decode("ascii")
-        signature = self._sign(encoded_payload)
-        return f"{encoded_payload}.{signature}"
+    def issue(self, broadcaster_id: str, login: str) -> tuple[str, str]:
+        session_token = secrets.token_urlsafe(32)
+        csrf_token = secrets.token_urlsafe(32)
+        expires_at = int(time.time()) + self.max_age_seconds
+        self.database.save_session(
+            session_token=session_token,
+            broadcaster_id=broadcaster_id,
+            login=login,
+            csrf_token=csrf_token,
+            expires_at=expires_at,
+        )
+        return session_token, csrf_token
 
     def validate(self, token: str | None) -> dict[str, Any] | None:
-        if not token or "." not in token:
+        if not token:
             return None
+        session = self.database.get_session(token)
+        if session is None:
+            return None
+        if int(session.expires_at) < int(time.time()):
+            self.database.delete_session(token)
+            return None
+        if self.database.get_broadcaster(session.broadcaster_id) is None:
+            self.database.delete_session(token)
+            return None
+        return {
+            "broadcaster_id": session.broadcaster_id,
+            "login": session.login,
+            "csrf_token": session.csrf_token,
+            "exp": session.expires_at,
+        }
 
-        encoded_payload, signature = token.split(".", 1)
-        if not hmac.compare_digest(signature, self._sign(encoded_payload)):
-            return None
+    def invalidate(self, token: str | None):
+        if token:
+            self.database.delete_session(token)
 
-        try:
-            raw_payload = base64.urlsafe_b64decode(encoded_payload.encode("ascii"))
-            payload = json.loads(raw_payload.decode("utf-8"))
-        except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
-            return None
-
-        if not isinstance(payload, dict):
-            return None
-        if int(payload.get("exp", 0)) < int(time.time()):
-            return None
-        if "broadcaster_id" not in payload or "login" not in payload:
-            return None
-        return payload
-
-    def _sign(self, encoded_payload: str) -> str:
-        digest = hmac.new(
-            self.secret,
-            encoded_payload.encode("utf-8"),
-            hashlib.sha256,
-        ).digest()
-        return base64.urlsafe_b64encode(digest).decode("ascii")
+    def invalidate_broadcaster(self, broadcaster_id: str):
+        self.database.delete_sessions_for_broadcaster(broadcaster_id)
 
 
 class TwitchAuth:
@@ -135,7 +180,7 @@ class TwitchAuth:
 
     async def exchange_code_for_tokens(
         self, auth_code: str, redirect_uri: str | None = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Exchange authorization code for access and refresh tokens."""
         url = f"{self.base_url}/token"
         data = {
@@ -165,7 +210,7 @@ class TwitchAuth:
                 )
                 raise RuntimeError(f"Failed to exchange code for tokens: {error_text}")
 
-    async def refresh_access_token(self, refresh_token: str) -> Dict[str, Any]:
+    async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
         """Refresh access token using a refresh token."""
         url = f"{self.base_url}/token"
         data = {
@@ -190,16 +235,7 @@ class TwitchAuth:
                 log.error("Token refresh failed: %s - %s", response.status, error_text)
                 raise RuntimeError(f"Failed to refresh token: {error_text}")
 
-    async def validate_token(self, access_token: str) -> bool:
-        """Validate if access token is still valid."""
-        url = f"{self.base_url}/validate"
-        headers = {"Authorization": f"OAuth {access_token}"}
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as response:
-                return response.status == 200
-
-    async def get_user_info(self, access_token: str) -> Dict[str, Any]:
+    async def get_user_info(self, access_token: str) -> dict[str, Any]:
         """Get authenticated user information."""
         url = f"{self.api_url}/users"
         headers = {
