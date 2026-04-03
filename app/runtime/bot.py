@@ -19,6 +19,7 @@ from app.models import BroadcasterSettings
 log = get_logger(__name__)
 
 ApiFactory = Callable[[], Awaitable[TwitchAPI]]
+RuntimeFailureCallback = Callable[[str], Awaitable[None]]
 
 
 class ClipitBot(commands.Bot):
@@ -36,6 +37,7 @@ class ClipitBot(commands.Bot):
         bot_username: str | None = None,
         broadcaster_name: str | None = None,
         api_factory: ApiFactory | None = None,
+        runtime_failure_callback: RuntimeFailureCallback | None = None,
     ):
         irc_token = access_token[6:] if access_token.startswith("oauth:") else access_token
         channel_name = (broadcaster_name or bot_username or "").lower()
@@ -59,6 +61,7 @@ class ClipitBot(commands.Bot):
         self.broadcaster_name = channel_name
         self.bot_username = bot_username
         self._api_factory = api_factory
+        self._runtime_failure_callback = runtime_failure_callback
 
         self.permission_checker = PermissionChecker(config)
         self.voting_system = VotingSystem(config, self.permission_checker)
@@ -75,6 +78,17 @@ class ClipitBot(commands.Bot):
             log.info("Bot ready for %s as %s", self.broadcaster_name, self.bot_username)
         else:
             log.info("Bot ready for %s", self.broadcaster_name)
+
+    async def event_channel_join_failure(self, channel: str):
+        log.error(
+            "Failed to join channel %s for broadcaster %s",
+            channel,
+            self.broadcaster_name,
+        )
+        if self._runtime_failure_callback is not None:
+            await self._runtime_failure_callback(
+                f'channel "{channel}" could not be joined'
+            )
 
     async def event_error(self, error, data=None):
         log.error("TwitchIO error occurred for %s: %s", self.broadcaster_name, error)

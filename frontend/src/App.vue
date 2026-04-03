@@ -110,11 +110,17 @@ const permissionLabels = computed(() =>
     ),
 );
 const workerIndicator = computed(() => {
+    const workerError = me.value?.worker?.worker_error;
     const workerRunning = Boolean(me.value?.worker?.worker_running);
 
     return {
-        value: workerRunning ? t("status.running") : t("status.idle"),
-        tone: workerRunning ? "ok" : "idle",
+        value: workerError
+            ? t("status.errored")
+            : workerRunning
+              ? t("status.running")
+              : t("status.idle"),
+        tone: workerError ? "error" : workerRunning ? "ok" : "idle",
+        hint: workerError ? t("status.workerErrorHint") : "",
     };
 });
 
@@ -302,6 +308,12 @@ async function refreshState() {
     }
 }
 
+function sleep(ms) {
+    return new Promise((resolve) => {
+        window.setTimeout(resolve, ms);
+    });
+}
+
 async function logout() {
     actionBusy.value = "logout";
     try {
@@ -378,10 +390,20 @@ async function toggleEnabled() {
             });
             me.value = snapshot;
             populateForm(snapshot);
-            notice.value = {
-                tone: "success",
-                message: t("notice.workerEnabled"),
-            };
+            await sleep(900);
+            await refreshState();
+
+            if (me.value?.worker?.worker_error || !me.value?.enabled) {
+                notice.value = {
+                    tone: "error",
+                    message: t("notice.workerReconnectRequired"),
+                };
+            } else {
+                notice.value = {
+                    tone: "success",
+                    message: t("notice.workerEnabled"),
+                };
+            }
         }
     } catch (error) {
         notice.value = {
@@ -629,7 +651,11 @@ onUnmounted(() => {
                                     <strong>{{ me.display_name || me.login }}</strong>
                                 </div>
 
-                                <div class="status-led status-led-inline" :data-tone="workerIndicator.tone">
+                                <div
+                                    class="status-led status-led-inline"
+                                    :data-tone="workerIndicator.tone"
+                                    :title="workerIndicator.hint"
+                                >
                                     <span class="status-led-light" aria-hidden="true"></span>
                                     <strong>{{ workerIndicator.value }}</strong>
                                 </div>

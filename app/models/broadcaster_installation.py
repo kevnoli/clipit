@@ -14,6 +14,7 @@ class BroadcasterInstallation(SQLModel, table=True):
     refresh_token: str
     expires_at: int
     enabled: bool = True
+    worker_error: str | None = None
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
@@ -21,6 +22,7 @@ class BroadcasterInstallation(SQLModel, table=True):
 class WorkerStatus(SQLModel):
     worker_present: bool
     worker_running: bool
+    worker_error: str | None = None
 
 
 class BroadcasterSnapshot(SQLModel):

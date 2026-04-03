@@ -46,6 +46,7 @@ class Database:
                 "refresh_token",
                 "expires_at",
                 "enabled",
+                "worker_error",
             },
             "broadcaster_settings": {
                 "broadcaster_id",
@@ -120,6 +121,7 @@ class Database:
                     refresh_token=self.secret_box.encrypt(refresh_token),
                     expires_at=expires_at,
                     enabled=enabled,
+                    worker_error=None,
                 )
                 session.add(broadcaster)
             else:
@@ -129,6 +131,7 @@ class Database:
                 broadcaster.refresh_token = self.secret_box.encrypt(refresh_token)
                 broadcaster.expires_at = expires_at
                 broadcaster.enabled = enabled
+                broadcaster.worker_error = None
                 broadcaster.updated_at = self._now()
 
             session.commit()
@@ -217,10 +220,26 @@ class Database:
             if broadcaster is None:
                 return
             broadcaster.enabled = enabled
+            if enabled:
+                broadcaster.worker_error = None
             broadcaster.updated_at = self._now()
             session.add(broadcaster)
             session.commit()
             log.warning("Broadcaster %s: enabled=%s", broadcaster_id, enabled)
+
+    def set_broadcaster_worker_error(
+        self,
+        broadcaster_id: str,
+        worker_error: str | None,
+    ):
+        with Session(self.engine) as session:
+            broadcaster = session.get(BroadcasterInstallation, broadcaster_id)
+            if broadcaster is None:
+                return
+            broadcaster.worker_error = worker_error
+            broadcaster.updated_at = self._now()
+            session.add(broadcaster)
+            session.commit()
 
     def delete_broadcaster(self, broadcaster_id: str):
         with Session(self.engine) as session:

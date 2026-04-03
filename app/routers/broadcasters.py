@@ -47,7 +47,10 @@ def build_broadcaster_snapshot(
         display_name=broadcaster.display_name,
         enabled=broadcaster.enabled,
         expires_at=broadcaster.expires_at,
-        worker=WorkerStatus(**services.worker_manager.get_worker_status(broadcaster_id)),
+        worker=WorkerStatus(
+            **services.worker_manager.get_worker_status(broadcaster_id),
+            worker_error=broadcaster.worker_error,
+        ),
         settings=BroadcasterSettingsSnapshot.from_settings(settings) if settings else None,
     )
     return snapshot
