@@ -25,7 +25,7 @@ export default {
         workerEnabled: "Worker enabled and running again.",
         workerToggleFailed: "Could not change worker state.",
         workerReconnectRequired:
-            "Twitch authorization is no longer valid. Removing this broadcaster and reconnecting may be required.",
+            "Twitch authorization is no longer valid. Reconnecting this broadcaster is recommended and will keep the saved settings.",
         broadcasterDisconnected: "Broadcaster disconnected from this Clipit instance.",
         broadcasterDisconnectFailed: "Could not disconnect broadcaster.",
     },
@@ -39,6 +39,9 @@ export default {
         totalClips: "Total clips",
         running: "Running",
         idle: "Idle",
+        errored: "Errored",
+        workerErrorHint:
+            "This worker failed to authenticate with Twitch. Reconnecting this broadcaster is recommended and will keep the saved settings.",
         yes: "Yes",
         no: "No",
         waiting: "Waiting for Twitch sign-in",
@@ -50,9 +53,6 @@ export default {
         triggeringExplanation:
             "Leave voting on, or set minimum votes to 1 to treat !clipit like a direct clip command.",
         connectButton: "Connect Twitch",
-        errored: "Errored",
-        workerErrorHint:
-            "This worker failed to reconnect to Twitch. Removing this broadcaster and reconnecting might be necessary.",
     },
     form: {
         commands: "Commands",
@@ -89,6 +89,9 @@ export default {
         refresh: "Refresh broadcaster state",
         disableHint: "Pause clip handling for this broadcaster without removing the installation.",
         enableHint: "Start the worker again and resume clip handling for this broadcaster.",
+        reconnectHint:
+            "Reconnect Twitch authorization for this broadcaster and keep the saved settings intact.",
+        reconnectButton: "Reconnect Twitch",
         disableButton: "Disable worker",
         enableButton: "Enable worker",
         updating: "Updating...",

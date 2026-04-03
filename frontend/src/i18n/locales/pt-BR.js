@@ -25,7 +25,7 @@ export default {
         workerEnabled: "Worker ativado novamente.",
         workerToggleFailed: "N\u00e3o foi poss\u00edvel alterar o estado do worker.",
         workerReconnectRequired:
-            "A autoriza\u00e7\u00e3o da Twitch n\u00e3o \u00e9 mais v\u00e1lida. Pode ser necess\u00e1rio remover este canal e conectar novamente.",
+            "A autoriza\u00e7\u00e3o da Twitch n\u00e3o \u00e9 mais v\u00e1lida. Reconectar este canal \u00e9 o caminho recomendado e preserva as configura\u00e7\u00f5es salvas.",
         broadcasterDisconnected: "Streamer desconectado desta inst\u00e2ncia do Clipit.",
         broadcasterDisconnectFailed: "N\u00e3o foi poss\u00edvel desconectar o streamer.",
     },
@@ -41,7 +41,7 @@ export default {
         idle: "Parado",
         errored: "Com erro",
         workerErrorHint:
-            "Este worker falhou ao se reconectar com a Twitch. Pode ser necess\u00e1rio remover este canal e conectar novamente.",
+            "Este worker falhou ao autenticar com a Twitch. Reconectar este canal \u00e9 o caminho recomendado e preserva as configura\u00e7\u00f5es salvas.",
         yes: "Sim",
         no: "N\u00e3o",
         waiting: "Aguardando login na Twitch",
@@ -89,6 +89,9 @@ export default {
         refresh: "Atualizar estado do streamer",
         disableHint: "Pausa a captura de clipes deste streamer sem remover a instala\u00e7\u00e3o.",
         enableHint: "Inicia o worker novamente e retoma a captura de clipes deste streamer.",
+        reconnectHint:
+            "Reconecta a autoriza\u00e7\u00e3o da Twitch para este streamer e preserva as configura\u00e7\u00f5es salvas.",
+        reconnectButton: "Reconectar Twitch",
         disableButton: "Desativar worker",
         enableButton: "Ativar worker",
         updating: "Atualizando...",

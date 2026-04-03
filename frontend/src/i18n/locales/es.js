@@ -25,7 +25,7 @@ export default {
         workerEnabled: "Worker activado nuevamente.",
         workerToggleFailed: "No se pudo cambiar el estado del worker.",
         workerReconnectRequired:
-            "La autorizaci\u00f3n de Twitch ya no es v\u00e1lida. Puede que sea necesario eliminar este canal y volver a conectarlo.",
+            "La autorizaci\u00f3n de Twitch ya no es v\u00e1lida. Reconectar este canal es el camino recomendado y conserva la configuraci\u00f3n guardada.",
         broadcasterDisconnected: "El streamer fue desconectado de esta instancia de Clipit.",
         broadcasterDisconnectFailed: "No se pudo desconectar el streamer.",
     },
@@ -41,7 +41,7 @@ export default {
         idle: "Inactivo",
         errored: "Con error",
         workerErrorHint:
-            "Este worker no pudo volver a conectarse a Twitch. Puede que sea necesario eliminar este canal y volver a conectarlo.",
+            "Este worker fall\u00f3 al autenticarse con Twitch. Reconectar este canal es el camino recomendado y conserva la configuraci\u00f3n guardada.",
         yes: "S\u00ed",
         no: "No",
         waiting: "Esperando inicio de sesi\u00f3n en Twitch",
@@ -89,6 +89,9 @@ export default {
         refresh: "Actualizar estado del streamer",
         disableHint: "Pausa la creaci\u00f3n de clips de este streamer sin quitar la instalaci\u00f3n.",
         enableHint: "Inicia de nuevo el worker y reanuda la creaci\u00f3n de clips para este streamer.",
+        reconnectHint:
+            "Vuelve a conectar la autorizaci\u00f3n de Twitch para este streamer y conserva la configuraci\u00f3n guardada.",
+        reconnectButton: "Reconectar Twitch",
         disableButton: "Desactivar worker",
         enableButton: "Activar worker",
         updating: "Actualizando...",

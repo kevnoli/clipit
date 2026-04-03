@@ -20,6 +20,10 @@ log = get_logger(__name__)
 ApiFactory = Callable[[], Awaitable[TwitchAPI]]
 
 
+class BroadcasterUnavailableError(RuntimeError):
+    pass
+
+
 class BroadcasterWorker:
     def __init__(
         self,
@@ -71,7 +75,7 @@ class BroadcasterWorker:
         try:
             await self.bot.start()
             if not self._stopping:
-                await self.report_runtime_failure("worker stopped unexpectedly")
+                await self.report_runtime_failure("The Twitch worker stopped unexpectedly.")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -129,10 +133,16 @@ class WorkerManager:
 
     async def start_all(self):
         for installation in self.database.get_enabled_broadcasters():
-            await self.start_or_restart_broadcaster(
-                installation.broadcaster_id,
-                installation=installation,
-            )
+            try:
+                await self.start_or_restart_broadcaster(
+                    installation.broadcaster_id,
+                    installation=installation,
+                )
+            except BroadcasterUnavailableError:
+                log.warning(
+                    "Skipping unavailable broadcaster during startup: %s",
+                    installation.broadcaster_id,
+                )
 
     async def shutdown(self):
         async with self._lock:
@@ -147,7 +157,13 @@ class WorkerManager:
     ) -> BroadcasterInstallation:
         installation = await self.ensure_valid_installation(broadcaster_id, installation)
         if installation is None:
-            raise RuntimeError(f"Broadcaster {broadcaster_id} is not available")
+            current = self.database.get_broadcaster(broadcaster_id)
+            detail = (
+                current.worker_error
+                if current and current.worker_error
+                else f"Broadcaster {broadcaster_id} is not available."
+            )
+            raise BroadcasterUnavailableError(detail)
 
         runtime_config = self.database.ensure_broadcaster_settings(
             broadcaster_id,
@@ -190,14 +206,11 @@ class WorkerManager:
         self,
         broadcaster_id: str,
         *,
-        invalidate_sessions: bool = False,
         reason: str | None = None,
     ):
         self.database.set_broadcaster_enabled(broadcaster_id, False)
         self.database.set_broadcaster_worker_error(broadcaster_id, reason)
         await self.stop_broadcaster(broadcaster_id)
-        if invalidate_sessions:
-            self.session_manager.invalidate_broadcaster(broadcaster_id)
         if reason:
             log.warning(
                 "Broadcaster %s disabled after runtime failure: %s",
@@ -214,11 +227,7 @@ class WorkerManager:
         self.database.delete_broadcaster(broadcaster_id)
 
     async def handle_runtime_failure(self, broadcaster_id: str, reason: str):
-        await self.disable_broadcaster(
-            broadcaster_id,
-            invalidate_sessions=False,
-            reason=reason,
-        )
+        await self.disable_broadcaster(broadcaster_id, reason=reason)
 
     async def update_broadcaster_settings(
         self,
@@ -242,17 +251,29 @@ class WorkerManager:
 
         current_time = int(time.time())
         if current_time < int(record.expires_at) - 300:
-            return record
+            user_info = await self.auth.get_user_info(record.access_token)
+            if user_info.get("id") == record.broadcaster_id:
+                return record
+
+            reason = (
+                "Twitch authorization is no longer valid. Reconnect this broadcaster to resume the worker."
+            )
+            log.warning("Invalid Twitch access token for %s", record.login)
+            await self.disable_broadcaster(broadcaster_id, reason=reason)
+            return None
 
         try:
             tokens = await self.auth.refresh_access_token(record.refresh_token)
         except Exception:
+            reason = (
+                "Twitch authorization is no longer valid. Reconnect this broadcaster to resume the worker."
+            )
             log.error(
                 "Failed to refresh Twitch token for %s; disabling broadcaster",
                 record.login,
                 exc_info=True,
             )
-            await self.disable_broadcaster(broadcaster_id)
+            await self.disable_broadcaster(broadcaster_id, reason=reason)
             return None
 
         self.database.save_broadcaster(
@@ -269,15 +290,17 @@ class WorkerManager:
     async def get_api_client(self, broadcaster_id: str) -> TwitchAPI:
         record = await self.ensure_valid_installation(broadcaster_id)
         if record is None:
-            raise RuntimeError(f"Broadcaster {broadcaster_id} is not enabled")
+            raise BroadcasterUnavailableError(f"Broadcaster {broadcaster_id} is not enabled")
         return TwitchAPI(self.settings.twitch_client_id, record.access_token)
 
     def connected_count(self) -> int:
         return len(self._workers)
 
-    def get_worker_status(self, broadcaster_id: str) -> dict[str, bool]:
+    def get_worker_status(self, broadcaster_id: str) -> dict[str, bool | str | None]:
         worker = self._workers.get(broadcaster_id)
+        broadcaster = self.database.get_broadcaster(broadcaster_id)
         return {
             "worker_present": worker is not None,
             "worker_running": worker.is_running() if worker else False,
+            "worker_error": broadcaster.worker_error if broadcaster else None,
         }

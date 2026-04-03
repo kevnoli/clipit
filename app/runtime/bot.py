@@ -87,7 +87,7 @@ class ClipitBot(commands.Bot):
         )
         if self._runtime_failure_callback is not None:
             await self._runtime_failure_callback(
-                f'channel "{channel}" could not be joined'
+                f'Channel "{channel}" could not be joined on Twitch.'
             )
 
     async def event_error(self, error, data=None):
